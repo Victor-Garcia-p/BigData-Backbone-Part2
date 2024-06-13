@@ -1,0 +1,4 @@
+TIPS TO WORK
+-Use a virtual environment of python
+-No need to start hadoop
+-use spark find at the start
