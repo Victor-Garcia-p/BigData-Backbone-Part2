@@ -1,6 +1,6 @@
 from hdfs import InsecureClient
 
-inp_path = "user/bdm/Formatted_zone/idealista"
+inp_path = "user/bdm/Formatted_zone/hotels"
 user_name = "bdm"
 host = "http://10.4.41.35:9870/"
 

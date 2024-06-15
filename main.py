@@ -38,6 +38,8 @@ groups_info = {
     },
 }
 
+groups_info = {"hotels": {"Description": "Information about hotels in neighbourhoods"}}
+
 ## Formatted zone ##
 # persistent_data_selector(user_name, host, groups_info)
 formatted_data_loader(user_name, host, groups_info)

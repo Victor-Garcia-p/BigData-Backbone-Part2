@@ -116,7 +116,6 @@ def formatted_data_loader(
         full_inp_path = inp_path + "/" + file
 
         file_names = os.listdir(full_inp_path)
-        print(f"Starting to merge {len(file_names)} files for {file} key")
 
         # Try to find a non-empty file in the folder
         mergedDF_len = 0
@@ -132,24 +131,27 @@ def formatted_data_loader(
             mergedDF_len = len(mergedDF.columns)
 
         # Join all files in the folder
-        while len(file_names) > 0:
-            name = file_names.pop(0)
-            format = name.split(".")[-1]
-            mergedDF2 = (
-                spark.read.option("multiline", "true")
-                .format(str(format))
-                .load(full_inp_path + "/" + name)
-            )
+        if len(file_names) != 0:
+            print(f"Starting to merge {len(file_names)} files for {file} key")
+            while len(file_names) > 0:
 
-            # Only join non-empty files
-            if len(mergedDF2.columns) > 0:
-                mergedDF = mergedDF.unionByName(mergedDF2, allowMissingColumns=True)
-            else:
-                warnings.warn(f"File: {name} is empty and was not processed")
+                name = file_names.pop(0)
+                format = name.split(".")[-1]
+                mergedDF2 = (
+                    spark.read.option("multiline", "true")
+                    .format(str(format))
+                    .load(full_inp_path + "/" + name)
+                )
+
+                # Only join non-empty files
+                if len(mergedDF2.columns) > 0:
+                    mergedDF = mergedDF.unionByName(mergedDF2, allowMissingColumns=True)
+                else:
+                    warnings.warn(f"File: {name} is empty and was not processed")
 
         n_rows_old = mergedDF.count()
         print(
-            f"Merged dataframe has {n_rows_old} rows and {len(mergedDF.columns)} columns"
+            f"Merged dataframe has {mergedDF.count()} rows and {len(mergedDF.columns)} columns"
         )
 
         # Split columns (if necessary)
