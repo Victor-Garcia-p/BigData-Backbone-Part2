@@ -11,7 +11,7 @@ import shutil
 
 import findspark
 import warnings
-from pyspark.sql.functions import split, col, sum, substr, sqrt
+from pyspark.sql.functions import split, col, avg, count
 
 import pyspark as py
 from pyspark.sql import SparkSession
@@ -137,7 +137,7 @@ def model_creation(
         print(f"From '{key}' dataframe, selected the following schema")
         df.printSchema()
         n_col_raw = df.count()
-        # df = df.na.drop()
+        df = df.na.drop()
 
         print(
             f"Removed {((n_col_raw - df.count())/n_col_raw) * 100} % rows that contained NA's"
@@ -145,48 +145,71 @@ def model_creation(
 
         dfs[key] = df
 
-        # Calculate KPI's
-        # 1) Number of stars per hotel
-        dfs["hotels"] = (
-            dfs["hotels"]
-            .withColumn(
-                "stars",
-                split(col("secondary_filters_name"), " ").cast("array<int>"),
-            )
-            .withColumn("stars", col("stars")[1])
+    # Calculate KPI's: Average number of hotels and stars per district
+    dfs["hotels"] = (
+        dfs["hotels"]
+        .withColumn(
+            "stars",
+            split(col("secondary_filters_name"), " ").cast("array<int>"),
         )
-        dfs["hotels"].drop("secondary_filters_name")
+        .withColumn("stars", col("stars")[1])
+    )
+    dfs["hotels"] = dfs["hotels"].drop("secondary_filters_name")
 
-        # 2) Distance of an hotel to the airport
-        # 41.30408967290831, 2.079161979031316
-        # .cast("array<int>")
-        """
-        dfs["hotels"] = (
-            dfs["hotels"]
-            .withColumn(
-                "geo_epgs_4326_lat",
-                dfs["hotels"]["geo_epgs_4326_lat"].cast(IntegerType()),
-            )
-            .show()
+    # Declare numeric variables
+    dfs["hotels"] = (
+        dfs["hotels"]
+        .withColumn(
+            "addresses_district_id",
+            dfs["hotels"]["addresses_district_id"].cast(IntegerType()),
         )
-                    .withColumn(
-                "geo_epgs_4326_lat",
-                substr("geo_epgs_4326_lat", 41.30408967290831),
-            )
-        """
-
-        # 3) Number of hotels x district
-
-        # change ID
-    """
-    def remove_commas(x):
-        return x.replace('"', "")
-
-    dfs["renda_familiar"] = dfs["renda_familiar"].transform(
-        "Nom_Districte", remove_commas
+        .withColumn(
+            "geo_epgs_4326_lat",
+            dfs["hotels"]["geo_epgs_4326_lat"].cast(IntegerType()),
+        )
+        .withColumn(
+            "geo_epgs_4326_lon",
+            dfs["hotels"]["geo_epgs_4326_lon"].cast(IntegerType()),
+        )
     )
 
-    ## Merge files
+    # Transform "districts names" from "renda familiar" so that they
+    # match the lookup table
+    dfs["renda_familiar"] = (
+        dfs["renda_familiar"]
+        .withColumn(
+            "Nom_Districte",
+            split(col("Nom_Districte"), '"'),
+        )
+        .withColumn("Nom_Districte", col("Nom_Districte")[1])
+        .withColumn(
+            "Índex RFD Barcelona = 100",
+            split(col("Índex RFD Barcelona = 100"), '"'),
+        )
+        .withColumn("Índex RFD Barcelona = 100", col("Índex RFD Barcelona = 100")[1])
+    )
+
+    # Group dataframes by district to reduce cardinality of joins
+    dfs["hotels"] = (
+        dfs["hotels"]
+        .groupBy("addresses_district_id")
+        .agg(
+            avg("stars").alias("Avg_stars"),
+            count("name").alias("N_hotels"),
+            avg("geo_epgs_4326_lat").alias("Avg_lat"),
+            avg("geo_epgs_4326_lon").alias("Avg_long"),
+        )
+    )
+
+    dfs["renda_familiar"] = (
+        dfs["renda_familiar"]
+        .groupBy(["Nom_Districte", "Codi_Districte"])
+        .agg(avg("Índex RFD Barcelona = 100").alias("Avg_Index_RFD"))
+    )
+    print(dfs["renda_familiar"].show())
+
+    """
+    ## Join files
     # 'renta familiar' and lookup tables
 
     dfs["model"] = dfs["renda_familiar"].join(
@@ -194,27 +217,24 @@ def model_creation(
         dfs["renda_familiar"].Nom_Districte == dfs["lookup_renta_idealista"].district,
         "inner",
     )
-    print(dfs["renda_familiar"].select("Nom_Districte").collect())
-    print(dfs["model"].count())
 
-    # 'renta familiar' and 'hotels'
-    dfs["model"] = dfs["hotels"].join(
-        dfs["renda_familiar"],
-        dfs["hotels"].addresses_district_id == dfs["renda_familiar"].Codi_Districte,
-        "inner",
-    )
-    dfs["model"] = dfs["model"].drop("addresses_district_ids")
-
-    print(dfs["model"].select("Nom_Districte").collect())
-    print(",,,")
-    print(dfs["lookup_renta_idealista"].select("district").collect())
-
-
-    print("Final")
     dfs["model"].printSchema()
     print(dfs["model"].count())
 
-    # Calculate 3 KPI's
+    # join with hotels
+
+    # join with idealista
+    print(dfs["model"].count(), "model BEFORE")
+    print(dfs["idealista"].count(), "idealista")
+
+    dfs["model"] = dfs["model"].join(
+        dfs["idealista"],
+        dfs["model"].district == dfs["idealista"].district,
+        "inner",
+    )
+    dfs["model"] = dfs["model"].drop("district")
+
+    print(dfs["model"].count())
 
     # Upload solution to hdfs
 
