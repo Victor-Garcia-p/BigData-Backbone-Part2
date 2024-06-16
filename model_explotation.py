@@ -11,6 +11,7 @@ import shutil
 
 import findspark
 import warnings
+from pyspark.sql.functions import split, col, sum, substr, sqrt
 
 import pyspark as py
 from pyspark.sql import SparkSession
@@ -92,49 +93,6 @@ def model_creation(
     dfs = {}
     file_names = os.listdir(inp_path)
 
-    # Create corrected schema for "hotels"
-    new_names = [
-        "register_id",
-        "name",
-        "institution_id",
-        "institution_name",
-        "created",
-        "modified",
-        "addresses_roadtype_id",
-        "addresses_roadtype_name",
-        "addresses_road_id",
-        "addresses_road_name",
-        "addresses_start_street_number",
-        "addresses_end_street_number",
-        "addresses_neighborhood_id",
-        "addresses_neighborhood_name",
-        "addresses_district_id",
-        "addresses_district_name",
-        "addresses_zip_code",
-        "addresses_town",
-        "addresses_main_address",
-        "addresses_type",
-        "values_id",
-        "values_attribute_id",
-        "values_category",
-        "values_attribute_name",
-        "values_value",
-        "values_outstanding",
-        "values_description",
-        "secondary_filters_id",
-        "secondary_filters_name",
-        "secondary_filters_fullpath",
-        "secondary_filters_tree",
-        "secondary_filters_asia_id",
-        "geo_epgs_25831_x",
-        "geo_epgs_25831_y",
-        "geo_epgs_4326_lat",
-        "geo_epgs_4326_lon",
-        "estimated_dates",
-        "start_date",
-        "end_date",
-    ]
-
     for file in file_names:
         full_in_path = inp_path + "/" + file
 
@@ -145,14 +103,6 @@ def model_creation(
         dfs[short_name] = (
             spark.read.option("multiline", "true").format("parquet").load(full_in_path)
         )
-
-        if short_name == "hotels":
-            old_names = dfs[short_name].schema.names
-
-            for i in range(len(new_names)):
-                dfs[short_name] = dfs[short_name].withColumnRenamed(
-                    old_names[i], new_names[i]
-                )
 
     # Select only usefull columns for the analysis
     selected_fields = {
@@ -170,7 +120,7 @@ def model_creation(
             "bathrooms",
             "hasLift",
         ],
-        "lookup_renta_idealista": ["neighborhood_id"],
+        "lookup_renta_idealista": ["district", "district_id"],
         "hotels": [
             "addresses_district_id",
             "name",
@@ -187,7 +137,7 @@ def model_creation(
         print(f"From '{key}' dataframe, selected the following schema")
         df.printSchema()
         n_col_raw = df.count()
-        df = df.na.drop()
+        # df = df.na.drop()
 
         print(
             f"Removed {((n_col_raw - df.count())/n_col_raw) * 100} % rows that contained NA's"
@@ -195,67 +145,80 @@ def model_creation(
 
         dfs[key] = df
 
-    # Merge files
-
-    """
-    print(f"Starting to merge {len(file_names)} files for {file} key")
-
-        # Try to find a non-empty file in the folder
-        mergedDF_len = 0
-        while mergedDF_len == 0:
-            name = file_names.pop(0)
-            format = name.split(".")[-1]
-
-            mergedDF = (
-                spark.read.option("multiline", "true")
-                .format(str(format))
-                .load(full_inp_path + "/" + name)
+        # Calculate KPI's
+        # 1) Number of stars per hotel
+        dfs["hotels"] = (
+            dfs["hotels"]
+            .withColumn(
+                "stars",
+                split(col("secondary_filters_name"), " ").cast("array<int>"),
             )
-            mergedDF_len = len(mergedDF.columns)
-
-        # Join all files in the folder
-        while len(file_names) > 0:
-            name = file_names.pop(0)
-            format = name.split(".")[-1]
-  
-            # Only join non-empty files
-            if len(mergedDF2.columns) > 0:
-                mergedDF = mergedDF.unionByName(mergedDF2, allowMissingColumns=True)
-            else:
-                warnings.warn(f"File: {name} is empty and was not processed")
-
-        n_rows_old = mergedDF.count()
-        print(
-            f"Merged dataframe has {n_rows_old} rows and {len(mergedDF.columns)} columns"
+            .withColumn("stars", col("stars")[1])
         )
+        dfs["hotels"].drop("secondary_filters_name")
 
-        # Split columns (if necessary)
-        if len(mergedDF.columns) == 1:
-            unsplitted_name = mergedDF.columns[0]
-            col_names = unsplitted_name.replace('"', "").split(",")
+        # 2) Distance of an hotel to the airport
+        # 41.30408967290831, 2.079161979031316
+        # .cast("array<int>")
+        """
+        dfs["hotels"] = (
+            dfs["hotels"]
+            .withColumn(
+                "geo_epgs_4326_lat",
+                dfs["hotels"]["geo_epgs_4326_lat"].cast(IntegerType()),
+            )
+            .show()
+        )
+                    .withColumn(
+                "geo_epgs_4326_lat",
+                substr("geo_epgs_4326_lat", 41.30408967290831),
+            )
+        """
 
-            split_DF = py.sql.functions.split(mergedDF[mergedDF.columns[0]], ",")
+        # 3) Number of hotels x district
 
-            for i in range(len(col_names)):
-                mergedDF = mergedDF.withColumn(col_names[i], split_DF.getItem(i))
+        # change ID
+    """
+    def remove_commas(x):
+        return x.replace('"', "")
 
-            # Remove original name
-            mergedDF = mergedDF.drop(unsplitted_name)
+    dfs["renda_familiar"] = dfs["renda_familiar"].transform(
+        "Nom_Districte", remove_commas
+    )
 
-        # Preprocessing (remove duplicates)
-        mergedDF = mergedDF.dropDuplicates(mergedDF.columns)
+    ## Merge files
+    # 'renta familiar' and lookup tables
 
-        n_rows_new = mergedDF.count()
-        print(f"Deleated {n_rows_old - n_rows_new} duplicated rows from {file} file")
+    dfs["model"] = dfs["renda_familiar"].join(
+        dfs["lookup_renta_idealista"],
+        dfs["renda_familiar"].Nom_Districte == dfs["lookup_renta_idealista"].district,
+        "inner",
+    )
+    print(dfs["renda_familiar"].select("Nom_Districte").collect())
+    print(dfs["model"].count())
 
-        # Add metadata to all fields
-        timestr = strftime("%Y%m%d-%H%M-", gmtime())
+    # 'renta familiar' and 'hotels'
+    dfs["model"] = dfs["hotels"].join(
+        dfs["renda_familiar"],
+        dfs["hotels"].addresses_district_id == dfs["renda_familiar"].Codi_Districte,
+        "inner",
+    )
+    dfs["model"] = dfs["model"].drop("addresses_district_ids")
 
-        metadata = {"mod_time": timestr, "origin_file_names": file_names}
-        metadata.update(groups_info[file])
+    print(dfs["model"].select("Nom_Districte").collect())
+    print(",,,")
+    print(dfs["lookup_renta_idealista"].select("district").collect())
 
-        for col in mergedDF.columns:
-            mergedDF = mergedDF.withMetadata(col, metadata)
+
+    print("Final")
+    dfs["model"].printSchema()
+    print(dfs["model"].count())
+
+    # Calculate 3 KPI's
+
+    # Upload solution to hdfs
+
+    # Use tableau
 
         # Save the file
         hdfs_client = InsecureClient(host, user=user_name)
@@ -290,14 +253,14 @@ master_files = {
     },
 }
 
-master_files = {"hotels": {"Description": "Information about hotels in neighbourhoods"}}
+# master_files = {"hotels": {"Description": "Information about hotels in neighbourhoods"}}
 
 user_name = "bdm"
 host = "http://10.4.41.35:9870/"
 
 # Load last versions of all dataframes from explotation zone
-for key_file in master_files.keys():
-    formatted_data_selector(user_name, host, key_file)
+# for key_file in master_files.keys():
+#    formatted_data_selector(user_name, host, key_file)
 
 # Create the model
 model_creation(user_name, host)

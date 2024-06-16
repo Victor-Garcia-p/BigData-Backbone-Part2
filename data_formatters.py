@@ -123,11 +123,19 @@ def formatted_data_loader(
             name = file_names.pop(0)
             format = name.split(".")[-1]
 
-            mergedDF = (
-                spark.read.option("multiline", "true")
-                .format(str(format))
-                .load(full_inp_path + "/" + name)
-            )
+            if format == "csv":
+                mergedDF = (
+                    spark.read.option("header", True)
+                    .option("delimiter", ",")
+                    .option("encoding", "UTF-16")
+                    .csv(full_inp_path + "/" + name)
+                )
+            else:
+                mergedDF = (
+                    spark.read.option("multiline", "true")
+                    .format(str(format))
+                    .load(full_inp_path + "/" + name)
+                )
             mergedDF_len = len(mergedDF.columns)
 
         # Join all files in the folder
