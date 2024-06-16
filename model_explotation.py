@@ -68,10 +68,11 @@ def formatted_data_selector(
         )
 
 
-def model_creation(
+def model_preprocessing(
     user_name,
     host,
     inp_path="model_temp",
+    out_name="Model_V1",
     out_path="user/bdm/Model_explotation_zone",
     spark_path="D:\spark\spark-3.5.1-bin-hadoop3",
     remove_temp_files=False,
@@ -206,27 +207,27 @@ def model_creation(
         .groupBy(["Nom_Districte", "Codi_Districte"])
         .agg(avg("Índex RFD Barcelona = 100").alias("Avg_Index_RFD"))
     )
-    print(dfs["renda_familiar"].show())
 
-    """
-    ## Join files
-    # 'renta familiar' and lookup tables
-
-    dfs["model"] = dfs["renda_familiar"].join(
-        dfs["lookup_renta_idealista"],
-        dfs["renda_familiar"].Nom_Districte == dfs["lookup_renta_idealista"].district,
+    ## Join files (remove useless attributes after each join)
+    # 'renta familiar' and hotels
+    dfs["model"] = dfs["hotels"].join(
+        dfs["renda_familiar"],
+        dfs["hotels"].addresses_district_id == dfs["renda_familiar"].Codi_Districte,
         "inner",
     )
 
-    dfs["model"].printSchema()
-    print(dfs["model"].count())
+    dfs["model"] = dfs["model"].drop(*["Codi_Districte", "addresses_district_id"])
 
-    # join with hotels
+    # join lookup tables
+    dfs["model"] = dfs["model"].join(
+        dfs["lookup_renta_idealista"],
+        dfs["model"].Nom_Districte == dfs["lookup_renta_idealista"].district,
+        "inner",
+    )
 
-    # join with idealista
-    print(dfs["model"].count(), "model BEFORE")
-    print(dfs["idealista"].count(), "idealista")
+    dfs["model"] = dfs["model"].drop("district_id")
 
+    # join idealista
     dfs["model"] = dfs["model"].join(
         dfs["idealista"],
         dfs["model"].district == dfs["idealista"].district,
@@ -234,27 +235,23 @@ def model_creation(
     )
     dfs["model"] = dfs["model"].drop("district")
 
-    print(dfs["model"].count())
-
+    return dfs["model"]
+    """
     # Upload solution to hdfs
+    hdfs_client = InsecureClient(host, user=user_name)
+    merged_name = timestr + file
+    inp_full_path = inp_path + "/" + file
+    out_full_path = out_path + "/" + file + "/" + merged_name
 
-    # Use tableau
+    mergedDF.write.parquet(inp_full_path, mode="overwrite")
+    hdfs_client.upload(out_full_path, inp_full_path, overwrite=True)
 
-        # Save the file
-        hdfs_client = InsecureClient(host, user=user_name)
-        merged_name = timestr + file
-        inp_full_path = inp_path + "/" + file
-        out_full_path = out_path + "/" + file + "/" + merged_name
+    # Remove temporal all files (if required)
+    if remove_temp_files == True:
+        shutil.rmtree(full_inp_path)
 
-        mergedDF.write.parquet(inp_full_path, mode="overwrite")
-        hdfs_client.upload(out_full_path, inp_full_path, overwrite=True)
-
-        # Remove temporal all files (if required)
-        if remove_temp_files == True:
-            shutil.rmtree(full_inp_path)
-
-        print(f"File {file} uploaded correctly at '{out_full_path}' path")
-        """
+    print(f"File {file} uploaded correctly at '{out_full_path}' path")
+    """
 
 
 master_files = {
@@ -273,8 +270,6 @@ master_files = {
     },
 }
 
-# master_files = {"hotels": {"Description": "Information about hotels in neighbourhoods"}}
-
 user_name = "bdm"
 host = "http://10.4.41.35:9870/"
 
@@ -282,5 +277,40 @@ host = "http://10.4.41.35:9870/"
 # for key_file in master_files.keys():
 #    formatted_data_selector(user_name, host, key_file)
 
-# Create the model
-model_creation(user_name, host)
+# Make preprocessing
+df = model_preprocessing(user_name, host)
+
+# Define the model
+
+from pyspark.ml.regression import GeneralizedLinearRegression
+from pyspark.ml.evaluation import RegressionEvaluator
+from pyspark.ml.linalg import Vectors
+from pyspark.ml.feature import VectorAssembler
+
+target = "price"
+features = df.columns.remove(target)
+
+vectorAssembler = VectorAssembler(inputCols=features, outputCol="features")
+df = vectorAssembler.transform(df)
+df = df.select(["features", "price"])
+df.show(3)
+
+"""
+# Divide preprocessed dataset
+# train, test = df.randomSplit([0.7, 0.3], seed=123)
+# print(f"Data splitted in Test {train.count()} rows and Train {test.count()} rows")
+
+
+glr = GeneralizedLinearRegression(
+    family="gaussian", link="identity", maxIter=10, regParam=0.3,
+    featuresCol = 'features', labelCol='price'
+)
+
+model1 = glr.fit(train)
+predictions = model1.transform(train)
+
+evaluator = RegressionEvaluator(metricName=["f1Score", "PRC"])
+results = evaluator.evaluate(predictions)
+
+print(results)
+"""
