@@ -14,14 +14,24 @@ Project presentation
 """
 
 from datetime import datetime
-from data_formatters import *
+from data_SelectorsAndFormatters import *
+from utils import *
 
-user_name = "bdm"
-host = "http://10.4.41.35:9870/"
+log = log_config("MyLog.log")
+logging_info = logging()
+
 persistent_path = "user/bdm/persistent_landing"
-limit = [datetime(2000, 6, 1), datetime(2200, 6, 1)]
 
-# Define dict with the correct metadata
+"""
+Define dict following the correct syntax
+dict = {file_name1 : {metadata_field:value}, ...}
+
+where 
+file_name = name of the file that we want to create in the formatted
+metadata_field = Optional information about the file (description) or "keywords" used
+to define which files will be merged
+"""
+
 groups_info = {
     "hotels": {"Description": "Information about hotels in neighbourhoods"},
     "renda_familiar": {
@@ -39,11 +49,13 @@ groups_info = {
 }
 
 groups_info = {"hotels": {"Description": "Information about hotels in neighbourhoods"}}
+limit = [datetime(2000, 6, 1), datetime(2200, 6, 1)]
 
 ## Formatted zone ##
-# persistent_data_selector(user_name, host, groups_info)
-formatted_data_loader(user_name, host, groups_info)
+# Download data from persistent zone, then merge files appliying soft preprocessing and
+# upload it to the formatted zone
 
-## Explotation zone (predictive model) ##
-
-# read dataframes from explotation zone
+persistent_data_selector(
+    log, logging_info["user_name"], logging_info["host"], groups_info, limit
+)
+formatted_data_loader(logging_info["user_name"], logging_info["host"], groups_info)

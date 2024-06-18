@@ -1,35 +1,41 @@
-import re
-from hdfs import InsecureClient
 import os
+import re
 from time import strftime, gmtime
+from hdfs import InsecureClient
+
 from datetime import datetime
 import shutil
 
 import findspark
-import warnings
 
-import pyspark as py
 from pyspark.sql import SparkSession
 from pyspark import SparkConf
+from pyspark.sql.functions import split
 
 
-# Select data for formatting zone
 def persistent_data_selector(
+    log,
     user_name,
     host,
     groups_info,
-    inp_path="user/bdm/persistent_landing",
     time_limit=[datetime(1, 1, 1), datetime(9999, 12, 12)],
+    inp_path="user/bdm/persistent_landing",
     out_path="temp",
 ):
+    """
+    Use: Select files from HDFS to be merged in new files.
+    To do it, we match keywords defined by the user with filenames in HDFS,
+    for each new file. This function also downloads data if an out path is defined.
+    """
 
-    # Create an new dictionary to store names of files for each group
+    # Create a dictionary to store names of files that will
+    # be merged for each key
     file_groups = {}
     for keyword in groups_info:
         file_groups[keyword] = []
 
-    # Scan all files on the directory and process only those that are bounded
-    # in the time limit
+    # Scan all files on the directory and process only those that
+    # are bounded in the time limit
     hdfs_client = InsecureClient(host, user=user_name)
     all_files = hdfs_client.list(inp_path)
 
@@ -42,6 +48,8 @@ def persistent_data_selector(
         if date >= time_limit[0] and date <= time_limit[1]:
             process_file = set(full_name[2:])
 
+            # Match filenames with keywords defined for each file
+            # (only exact coincidences are considered)
             while len(process_file) != 0:
                 file_processed = process_file.pop()
 
@@ -54,14 +62,14 @@ def persistent_data_selector(
     k = [i for i in file_groups.keys()]
     n = [len(i) for i in file_groups.values()]
 
-    print("Found", n, "files that matches", k, "keys")
+    log.info("Found", n, "files that matches", k, "keys")
 
-    # Download files (if required), otherwise return the files
-    # that correspon to each group
+    # Download files to a temporal folder or simply return names
+    # of the files from HDFS to merge
     if out_path != None:
         for group in file_groups.keys():
             if len(file_groups[group]) == 0:
-                warnings.warn(f"Unable to retrieve any file for '{group}' group")
+                log.warn(f"Unable to retrieve any file for '{group}' group")
                 pass
             else:
                 for file in file_groups[group]:
@@ -72,7 +80,7 @@ def persistent_data_selector(
                     if os.path.exists(out_group_path) == False:
                         os.mkdir(out_group_path)
 
-                    # create the output directory if it does not exist
+                    # Create the temp directory if it does not exist
                     if os.path.exists(out_group_path) == False:
                         os.mkdir(out_path)
 
@@ -81,16 +89,15 @@ def persistent_data_selector(
                         (out_group_path + "/" + file),
                         overwrite=True,
                     )
-                print(
+                log.info(
                     f"All files from '{group}' key downloaded in '{out_group_path}' path"
                 )
     else:
         return file_groups
 
 
-# in remove duplicates, you can pass a list will all pk of the file.
-# how two attributes are related
 def formatted_data_loader(
+    log,
     user_name,
     host,
     groups_info,
@@ -99,8 +106,18 @@ def formatted_data_loader(
     spark_path="D:\spark\spark-3.5.1-bin-hadoop3",
     remove_temp_files=True,
 ):
-    # Ensure that the sparl sesion is correctly loaded,
-    # then create a sesion
+    """
+    Use: Merge files downloaded from persistent zone and upload them to
+    the formatted zone. All files should have csv or parquet format and they
+    should be located in subfolders of the inp path.
+
+    Ex:
+    -Inp_path
+        -Folder (File1): With all files that will be merged to create File1
+        -Folder (File2): With all files that will be merged to create File2
+    """
+
+    # Ensure that the sparl sesion is correctly defined then create a sesion
     findspark.init(spark_path)
 
     conf = (
@@ -109,12 +126,12 @@ def formatted_data_loader(
         .set("spark.app.name", "Formatted zone loader")
     )
     spark = SparkSession.builder.config(conf=conf).getOrCreate()
-    print("Spark sesion correctly initialized")
+    log.info("Spark sesion correctly initialized")
 
-    hdfs_client = InsecureClient(host, user=user_name)
     for file in groups_info.keys():
-        full_inp_path = inp_path + "/" + file
 
+        # Get names of all files to merge
+        full_inp_path = inp_path + "/" + file
         file_names = os.listdir(full_inp_path)
 
         # Try to find a non-empty file in the folder
@@ -127,20 +144,23 @@ def formatted_data_loader(
                 mergedDF = (
                     spark.read.option("header", True)
                     .option("delimiter", ",")
-                    .option("encoding", "UTF-16")
+                    .option("encoding", "UTF-16")  # change encoding if required
                     .csv(full_inp_path + "/" + name)
                 )
-            else:
+
+            if format == "parquet":
                 mergedDF = (
                     spark.read.option("multiline", "true")
                     .format(str(format))
                     .load(full_inp_path + "/" + name)
                 )
+
             mergedDF_len = len(mergedDF.columns)
 
         # Join all files in the folder
         if len(file_names) != 0:
-            print(f"Starting to merge {len(file_names)} files for {file} key")
+
+            log.info(f"Starting to merge {len(file_names)} files for {file} key")
             while len(file_names) > 0:
 
                 name = file_names.pop(0)
@@ -151,14 +171,14 @@ def formatted_data_loader(
                     .load(full_inp_path + "/" + name)
                 )
 
-                # Only join non-empty files
+                # Only merge non-empty files
                 if len(mergedDF2.columns) > 0:
                     mergedDF = mergedDF.unionByName(mergedDF2, allowMissingColumns=True)
                 else:
-                    warnings.warn(f"File: {name} is empty and was not processed")
+                    log.warn(f"File: {name} is empty and was not processed")
 
         n_rows_old = mergedDF.count()
-        print(
+        log.info(
             f"Merged dataframe has {mergedDF.count()} rows and {len(mergedDF.columns)} columns"
         )
 
@@ -167,21 +187,22 @@ def formatted_data_loader(
             unsplitted_name = mergedDF.columns[0]
             col_names = unsplitted_name.replace('"', "").split(",")
 
-            split_DF = py.sql.functions.split(mergedDF[mergedDF.columns[0]], ",")
+            split_DF = split(mergedDF[mergedDF.columns[0]], ",")
 
             for i in range(len(col_names)):
                 mergedDF = mergedDF.withColumn(col_names[i], split_DF.getItem(i))
 
-            # Remove original name
+            # Remove original col names
             mergedDF = mergedDF.drop(unsplitted_name)
 
-        # Preprocessing (remove duplicates)
+        # Remove duplicated rows
         mergedDF = mergedDF.dropDuplicates(mergedDF.columns)
 
         n_rows_new = mergedDF.count()
-        print(f"Deleated {n_rows_old - n_rows_new} duplicated rows from {file} file")
+        log.info(f"Deleated {n_rows_old - n_rows_new} duplicated rows from {file} file")
 
-        # Add metadata to all fields
+        # Add metadata to all fields:
+        # timstamp, files that were merged and information defined by the user
         timestr = strftime("%Y%m%d-%H%M-", gmtime())
 
         metadata = {"mod_time": timestr, "origin_file_names": file_names}
@@ -190,16 +211,69 @@ def formatted_data_loader(
         for col in mergedDF.columns:
             mergedDF = mergedDF.withMetadata(col, metadata)
 
-        # Save the file
+        # Save the file in local and upload it to the formatted zone
         merged_name = timestr + file
         inp_full_path = inp_path + "/" + file
         out_full_path = out_path + "/" + file + "/" + merged_name
 
         mergedDF.write.parquet(inp_full_path, mode="overwrite")
+        hdfs_client = InsecureClient(host, user=user_name)
         hdfs_client.upload(out_full_path, inp_full_path, overwrite=True)
+        log.info(f"File {file} uploaded correctly at '{out_full_path}' path")
 
-        # Remove temporal all files (if required)
+        # Remove all local files (if required)
         if remove_temp_files == True:
             shutil.rmtree(full_inp_path)
 
-        print(f"File {file} uploaded correctly at '{out_full_path}' path")
+
+def formatted_data_selector(
+    log,
+    user_name,
+    host,
+    group_name,
+    inp_path="user/bdm/Formatted_zone",
+    out_path="model_temp",
+):
+    """
+    Use: For each file requested download the latest version from HDFS to local
+    """
+
+    # Scan all files on the directory and process only those that are bounded
+    # in the time limit
+    hdfs_client = InsecureClient(host, user=user_name)
+    all_files = hdfs_client.list(inp_path + "/" + group_name)
+    max_timestamp = datetime(1, 1, 1)
+    last_version = all_files.pop(0)
+
+    while len(all_files) != 0:
+        file = all_files.pop(0)
+        full_name = file.split("-", maxsplit=2)
+        date_format = "%Y%m%d %H%M"
+
+        date = datetime.strptime(" ".join(full_name[0:2]), date_format)
+
+        if date > max_timestamp:
+            max_timestamp = date
+            last_version = file
+
+    # Download last version of the dataframe
+    if os.path.exists(out_path) == False:
+        os.mkdir(out_path)
+
+    dataframe_path = out_path + "/" + last_version
+    if os.path.exists(dataframe_path) == False:
+        os.mkdir(dataframe_path)
+
+    all_files = hdfs_client.list(inp_path + "/" + group_name + "/" + last_version)
+    if os.path.exists(out_path) == False:
+        os.mkdir(out_path)
+
+    for df_file in all_files:
+        in_full_path = inp_path + "/" + group_name + "/" + last_version + "/" + df_file
+        out_full_path = out_path + "/" + last_version + "/" + df_file
+        hdfs_client.download(
+            (in_full_path),
+            (out_full_path),
+            overwrite=True,
+        )
+    log.info(f"File {last_version} downloaded correctly")

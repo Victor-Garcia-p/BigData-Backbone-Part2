@@ -1,28 +1,35 @@
 """
-# Automatic mode
-treshold     = 0.70
-minGroupSize = 1
-
-from jellyfish import jaro_similarity
-from itertools import combinations
-
-paired = { c:{c} for c in data }
-for a,b in combinations(data,2):
-    if jaro_similarity(a,b) < treshold: continue
-    paired[a].add(b)
-    paired[b].add(a)
-
-groups    = list()
-ungrouped = set(data)
-while ungrouped:
-    bestGroup = {}
-    for city in ungrouped:
-        g = paired[city] & ungrouped
-        for c in g.copy():
-            g &= paired[c] 
-        if len(g) > len(bestGroup):
-            bestGroup = g
-    if len(bestGroup) < minGroupSize : break  # to terminate grouping early change minGroupSize to 3
-    ungrouped -= bestGroup
-    groups.append(bestGroup)
+Contains basic functions to initiate session on HDFS and initiate a log 
+to save errors
 """
+
+import logging
+
+
+def logging_creation(logging_file="credentials.logging"):
+    """
+    Use: Autentificate the user for the HDFS virtual machine
+    """
+    with open(logging_file) as f:
+        key_values = f.read().split()
+
+        logging_info = {}
+        while len(key_values) != 0:
+            logging_info[key_values.pop(0).split(":")[0]] = key_values.pop(1)
+
+    return logging_info
+
+
+def log_config(log_name):
+    """
+    Use: Create and configure a log mechanism to save errors
+    occurring during the process
+    """
+    logging.basicConfig(
+        filename=log_name, format="%(asctime)s %(message)s", filemode="w"
+    )
+
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG)
+
+    return logger
