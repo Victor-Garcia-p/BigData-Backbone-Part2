@@ -1,3 +1,10 @@
+"""
+Use: Contains all functions to read data from persistent (persistent_data_selector) and 
+preprocess it and upload it to the formatted zone (formatted_data_loader).
+Lastly, there is a function to retrieve data from the formatted zone that can be used
+for making the explotation zone
+"""
+
 import os
 import re
 from time import strftime, gmtime
@@ -62,7 +69,8 @@ def persistent_data_selector(
     k = [i for i in file_groups.keys()]
     n = [len(i) for i in file_groups.values()]
 
-    log.info("Found", n, "files that matches", k, "keys")
+    log.info(f"Found {n} files that matches {k} keys")
+    print("Found", n, "files that matches", k, "keys")
 
     # Download files to a temporal folder or simply return names
     # of the files from HDFS to merge
@@ -90,6 +98,9 @@ def persistent_data_selector(
                         overwrite=True,
                     )
                 log.info(
+                    f"All files from '{group}' key downloaded in '{out_group_path}' path"
+                )
+                print(
                     f"All files from '{group}' key downloaded in '{out_group_path}' path"
                 )
     else:
@@ -220,6 +231,7 @@ def formatted_data_loader(
         hdfs_client = InsecureClient(host, user=user_name)
         hdfs_client.upload(out_full_path, inp_full_path, overwrite=True)
         log.info(f"File {file} uploaded correctly at '{out_full_path}' path")
+        print(f"File {file} uploaded correctly at '{out_full_path}' path")
 
         # Remove all local files (if required)
         if remove_temp_files == True:
@@ -277,3 +289,4 @@ def formatted_data_selector(
             overwrite=True,
         )
     log.info(f"File {last_version} downloaded correctly")
+    print(f"File {last_version} downloaded correctly")

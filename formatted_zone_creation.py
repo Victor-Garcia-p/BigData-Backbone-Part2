@@ -1,24 +1,16 @@
 """
-Project presentation 
-  Master's Degree in Data Science
-  Spring 2024
-  Big Data Management
-
-  Project 2: Descriptive and predictive analysis (Formatted and Exploitation Zones)
-
-  Team-X
-  Víctor García Pizarro
-
-  Program info: 
-  ...
+Info: Request data from persistent landing, process it and
+creates a formatted zone.
+Input: credentials of the user and host to access virtual machine
 """
 
 from datetime import datetime
 from data_SelectorsAndFormatters import *
 from utils import *
 
+# Identify the user and create a log file
 log = log_config("MyLog.log")
-logging_info = logging()
+logging_info = logging_creation("credentials.logging")
 
 persistent_path = "user/bdm/persistent_landing"
 
@@ -33,7 +25,10 @@ to define which files will be merged
 """
 
 groups_info = {
-    "hotels": {"Description": "Information about hotels in neighbourhoods"},
+    "hotels": {
+        "keywords": ["hotels"],
+        "Description": "Information about hotels in neighbourhoods",
+    },
     "renda_familiar": {
         "keywords": ["renda_familiar"],
         "Description": "Data from Open Barcelona with incomes of families. Can be joined with 'idealista' file using a lookup file",
@@ -47,15 +42,13 @@ groups_info = {
         "Description": "Lookup datable to join 'Idealista' and 'renda familiar'",
     },
 }
-
-groups_info = {"hotels": {"Description": "Information about hotels in neighbourhoods"}}
 limit = [datetime(2000, 6, 1), datetime(2200, 6, 1)]
 
 ## Formatted zone ##
-# Download data from persistent zone, then merge files appliying soft preprocessing and
-# upload it to the formatted zone
+# Download data from persistent zone, then merge
+# files appliying soft preprocessing and save it
 
 persistent_data_selector(
     log, logging_info["user_name"], logging_info["host"], groups_info, limit
 )
-formatted_data_loader(logging_info["user_name"], logging_info["host"], groups_info)
+formatted_data_loader(log, logging_info["user_name"], logging_info["host"], groups_info)

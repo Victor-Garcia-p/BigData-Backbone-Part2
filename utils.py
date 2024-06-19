@@ -1,6 +1,6 @@
 """
-Contains basic functions to initiate session on HDFS and initiate a log 
-to save errors
+Info: Contains basic functions to initiate session on HDFS 
+and initiate a log  to save errors
 """
 
 import logging
@@ -8,7 +8,10 @@ import logging
 
 def logging_creation(logging_file="credentials.logging"):
     """
-    Use: Autentificate the user for the HDFS virtual machine
+    Use: Autentificate the user for the HDFS virtual machine.
+    The format of the file must be
+        user: name
+        host: number
     """
     with open(logging_file) as f:
         key_values = f.read().split()
